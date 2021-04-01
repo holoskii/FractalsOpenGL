@@ -16,3 +16,5 @@ Controls:
  x - change color mode
 
 
+![image](https://user-images.githubusercontent.com/57939291/113323020-1ffe6600-931e-11eb-9a88-9246c465db0d.png)
+![image](https://user-images.githubusercontent.com/57939291/113323239-69e74c00-931e-11eb-99e2-b5f4297fee1e.png)
