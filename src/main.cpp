@@ -1,5 +1,3 @@
-#include <windows.h>
-#undef APIENTRY
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
