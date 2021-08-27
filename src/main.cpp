@@ -6,47 +6,69 @@
 
 #include "shader.h"
 
+// glfw can help us to easily limit FPS to 60
 #define LIMIT_FPS true
 
 class Window
 {
 public:
-	Window(unsigned int a_width = 1920, unsigned int a_height = 1080);
+	Window();
 	~Window();
 	void run();
 
 private:
     void update();
     void render();
-	void processInput(float deltaTime);
-	static void frameBufferChangedCallback(GLFWwindow* window, int width, int height);
+	void processInput(float deltaTime); // use delta time to move correctly
+    void setDimensions(const int a_width, const int a_height);
+    void changeCursorPos(float xpos, float ypos);
 
-    std::string title = "OpenGL";
-    bool running = 1;
-    float xPos, yPos, xSize, ySize;
+    // static callbacks, they refer to globalWindow pointer
+	static void frameBufferChangedCallback(GLFWwindow* window, int width, int height);
+    static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+    static void cursorCallback(GLFWwindow* window, double xpos, double ypos);
+    
+    std::string title = "Mandelbrot Set OpenGL";
+    GLFWwindow* window = NULL;
+    GLFWmonitor* monitor = NULL;
+    Shader shader;
+
+    // 0 - Mandelbrot, 1 - Julia sets
+    bool mode = 0;
+    bool modeSwitch = 0;
+
+    bool fullscreen = 0;
+    bool fullscreenSwitch = 0;
+
+    int monitorWidth, monitorHeight;
+    unsigned int windowWidth, windowHeight;
+
+    float coursorPosX, coursorPosY;
+    float posX, posY;
+    float sizeX, sizeY;
+
     float movementCoefficient = 0.001f;
     float zoomCoefficient = 1.01f;
 
-    unsigned int width, height;
-    GLFWwindow* window = NULL;
-    Shader shader;
     unsigned int vertexArrayObjectID = 0;
     unsigned int vertexBufferObjectID = 0;
 
-    const double minFrameTimeMS = 1000.0 / 60.0;
-    const float vertices[32] = {
-         1.0f,  1.0f, 0.0f,     1.0f, 1.0f, // top right
-         1.0f, -1.0f, 0.0f,     1.0f, 0.0f, // bottom right
-        -1.0f, -1.0f, 0.0f,     0.0f, 0.0f, // bottom left
+    // whole screen consists of 2 triangles
+    const float vertices[30] = {
+         1.0f,  1.0f, 0.0f, // top right
+         1.0f, -1.0f, 0.0f, // bottom right
+        -1.0f, -1.0f, 0.0f, // bottom left
 
-         1.0f,  1.0f, 0.0f,     1.0f, 1.0f, // top right
-        -1.0f,  1.0f, 0.0f,     0.0f, 1.0f, // top left
-        -1.0f, -1.0f, 0.0f,     0.0f, 0.0f  // bottom left
+         1.0f,  1.0f, 0.0f, // top right
+        -1.0f,  1.0f, 0.0f, // top left
+        -1.0f, -1.0f, 0.0f  // bottom left
     };
 };
 
-Window::Window(unsigned int a_width, unsigned int a_height)
-	: width(a_width), height(a_height)
+// we need this window to manage callbacks
+Window* globalWindow;
+
+Window::Window()
 {
     // initialize GLFW
     glfwInit();
@@ -54,15 +76,25 @@ Window::Window(unsigned int a_width, unsigned int a_height)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
+    // get display resolution
+    const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
+    monitorWidth = mode->width;
+    monitorHeight = mode->height;
+
+    // set window size at quarter display size
+    windowWidth = monitorWidth / 2;
+    windowHeight = monitorHeight / 2;
+
     // try to create window
     if (!LIMIT_FPS) {
         glfwWindowHint(GLFW_DOUBLEBUFFER, GL_FALSE);
     }
-    window = glfwCreateWindow(width, height, title.c_str(), NULL, NULL);
+    window = glfwCreateWindow(windowWidth, windowHeight, title.c_str(), NULL, NULL);
     if (!window) {
         glfwTerminate();
         throw std::exception("Failed to create window");
     }
+    monitor = glfwGetWindowMonitor(window);
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, frameBufferChangedCallback);
 
@@ -85,17 +117,33 @@ Window::Window(unsigned int a_width, unsigned int a_height)
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
     // specify position attribute
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    // specify texture attribute and enable array
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
+    // set default location
+    posX = -2.86f;
+    posY = -1.13f;
+    sizeY = 2.3f;
+    sizeX = ((float)windowWidth) / windowHeight * sizeY;
 
-    xPos = -2.86f;
-    yPos = -1.13f;
-    ySize = 2.3f;
-    xSize = ((float)width) / height * ySize;
+    // connect callbacks
+    glfwSetKeyCallback(window, keyCallback);
+    glfwSetCursorPosCallback(window, cursorCallback);
+
+    // print help
+    std::cout <<
+        "This program supports 2 sets: Mandelbrot and Julia\n"\
+        "First one is default. In Mandelbrot you can only move and zoom.\n"\
+        "In Julia set mode each cursor position in window will generate different fractal.\n"\
+        "You will have to move it around and find different sets for yourself.\n\n";
+
+    std::cout <<
+        "Move:              Arrows or WASD\n"\
+        "Zoom in:           Z or Numpad +\n"\
+        "Zoom out:          X or Numpad -\n"\
+        "Toggle fullscreen: F11\n"
+        "Change mode:       M\n"\
+        "Close window:      Esc\n\n";
 }
 
 Window::~Window()
@@ -108,15 +156,16 @@ Window::~Window()
 
 void Window::run()
 {
+    // need this for UPS and FPS
     double lastTime = glfwGetTime();
     double timer = lastTime;
     double delta = 0;
 
     int updates = 0;
     int frames = 0;
-    while (running) {
+    while (!glfwWindowShouldClose(window)) {
         double now = glfwGetTime();
-        delta += ((now - lastTime) * 1000) / minFrameTimeMS;
+        delta += (now - lastTime) * 60.0;
         lastTime = now;
         while (delta >= 1) {
             update();
@@ -140,21 +189,58 @@ void Window::run()
 void Window::update()
 {
     static double prevUpdate = 0;
-    float timeDelta = (glfwGetTime() - prevUpdate) * 1000.0;
+    float timeDelta = (float)((glfwGetTime() - prevUpdate) * 1000.0);
+
     // on update
     glfwPollEvents();
     processInput(timeDelta);
-    running = !glfwWindowShouldClose(window);
+
+    // switch fullscreen to windowed and vice versa
+    if (fullscreenSwitch && !fullscreen) {
+        fullscreen = 1;
+        fullscreenSwitch = 0;
+        glfwSetWindowMonitor(window, monitor, 0, 0, monitorWidth, monitorHeight, GLFW_DONT_CARE);
+        setDimensions(monitorWidth, monitorHeight);
+    }
+    if (fullscreenSwitch && fullscreen) {
+        fullscreen = 0;
+        fullscreenSwitch = 0;
+        glfwSetWindowMonitor(window, NULL, 50, 50, monitorWidth / 2, monitorHeight / 2, GLFW_DONT_CARE);
+        setDimensions(monitorWidth / 2, monitorHeight / 2);
+    }
+
+    // change Mandelbrot to Julia and vice versa
+    if (modeSwitch) {
+        mode ^= 1;
+        modeSwitch = 0;
+        if (!mode) {
+            title = "Mandelbrot Set OpenGL";
+        }
+        else {
+            title = "Julia Set OpenGL";
+        }
+    }
+
     prevUpdate = glfwGetTime();
 }
 
 void Window::render()
 {
     // on render
-    glUniform2f(glGetUniformLocation(shader.programID, "pos"), xPos, yPos);
-    glUniform2f(glGetUniformLocation(shader.programID, "size"), xSize, ySize);
+    glUniform2f(glGetUniformLocation(shader.programID, "pos"), posX, posY);
+    glUniform2f(glGetUniformLocation(shader.programID, "size"), sizeX, sizeY);
+    glUniform2f(glGetUniformLocation(shader.programID, "viewportSize"), (float)windowWidth, (float)windowHeight);
+
+    // -100 is incorrect parameter, and shader will render Mandelbrot
+    if (mode == 0)
+        glUniform2f(glGetUniformLocation(shader.programID, "juliaConstant"), -100.0f, -1000.f);
+    else 
+        glUniform2f(glGetUniformLocation(shader.programID, "juliaConstant"), coursorPosX, coursorPosY);
+
     shader.useProgram();
     glDrawArrays(GL_TRIANGLES, 0, 6);
+    
+    // update screen
     if (LIMIT_FPS) {
         glfwSwapBuffers(window); // double duffer, limit to 60 FPS
     }
@@ -164,48 +250,89 @@ void Window::render()
 }
 
 void Window::processInput(float timeDelta) {
+    // exit
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
-    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
-        yPos += ySize * timeDelta * movementCoefficient;
-    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
-        yPos -= ySize * timeDelta * movementCoefficient;
-    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
-        xPos -= xSize * timeDelta * movementCoefficient;
-    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
-        xPos += xSize * timeDelta * movementCoefficient;
+    
+    // move
+    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        posY += sizeY * timeDelta * movementCoefficient;
+    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        posY -= sizeY * timeDelta * movementCoefficient;
+    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        posX -= sizeX * timeDelta * movementCoefficient;
+    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        posX += sizeX * timeDelta * movementCoefficient;
+    
+    // zoom
     if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_KP_ADD) == GLFW_PRESS) {
-        xPos += xSize * (1 - 1 / zoomCoefficient) / 2;
-        yPos += ySize * (1 - 1 / zoomCoefficient) / 2;
-        xSize /= zoomCoefficient;
-        ySize /= zoomCoefficient;
+        posX += sizeX * (1 - 1 / zoomCoefficient) / 2;
+        posY += sizeY * (1 - 1 / zoomCoefficient) / 2;
+        sizeX /= zoomCoefficient;
+        sizeY /= zoomCoefficient;
     }
     if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_KP_SUBTRACT) == GLFW_PRESS) {
-        xPos += xSize * (1 - 1 * zoomCoefficient) / 2;
-        yPos += ySize * (1 - 1 * zoomCoefficient) / 2;
-        xSize *= zoomCoefficient;
-        ySize *= zoomCoefficient;
+        posX += sizeX * (1 - 1 * zoomCoefficient) / 2;
+        posY += sizeY * (1 - 1 * zoomCoefficient) / 2;
+        sizeX *= zoomCoefficient;
+        sizeY *= zoomCoefficient;
     }
+
+    // reset
     if (glfwGetKey(window, GLFW_KEY_0) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_KP_0) == GLFW_PRESS) {
-        xPos = -2.86f;
-        yPos = -1.13f;
-        ySize = 2.3f;
-        xSize = ((float)width) / height * ySize;
+        posX = -2.86f;
+        posY = -1.13f;
+        sizeY = 2.3f;
+        sizeX = ((float)windowWidth) / windowHeight * sizeY;
     }
         
-    // std::cout << zoomCoefficient << ' ' << xPos << ' ' << yPos << ' ' << xSize << ' ' << ySize << '\n';
+    // std::cout << posX << ' ' << posY << ' ' << sizeX << ' ' << sizeY << '\n';
+}
+
+void Window::setDimensions(const int a_width, const int a_height)
+{
+    // this function handles data from callback
+    glViewport(0, 0, a_width, a_height);
+    globalWindow->windowWidth = a_width;
+    globalWindow->windowHeight = a_height;
+    sizeX = ((float)windowWidth) / windowHeight * sizeY;
+}
+
+void Window::changeCursorPos(float xpos, float ypos)
+{
+    // this function handles data from callback
+    coursorPosX = xpos / windowWidth * 2.0f - 1.0f;
+    coursorPosY = -(ypos / windowHeight * 2.0f - 1.0f);
 }
 
 void Window::frameBufferChangedCallback(GLFWwindow* window, int width, int height)
 {
-	glViewport(0, 0, width, height);
+    globalWindow->setDimensions(width, height);
 }
+
+void Window::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    // toggle fullscreen
+    if (key == GLFW_KEY_F11 && action == GLFW_PRESS)
+        globalWindow->fullscreenSwitch = 1;
+    
+    // toggle mode
+    if (key == GLFW_KEY_M && action == GLFW_PRESS)
+        globalWindow->modeSwitch = 1;
+}
+
+void Window::cursorCallback(GLFWwindow* window, double xpos, double ypos)
+{
+    globalWindow->changeCursorPos((float)xpos, (float)ypos);
+}
+
 
 int main()
 {
+    // launch application and catch any exceptions
     try {
-        Window w(1920, 1080);
-        w.run();
+        globalWindow = new Window();
+        globalWindow->run();
     }
     catch (const std::exception& e) {
         std::cerr << "Exception caught: " << e.what() << '\n';
